@@ -40,8 +40,16 @@ type SetterLib struct {
 	redis           CommonRedis
 }
 
-func NewSetterLib() *SetterLib {
-	return &SetterLib{}
+func NewSetterLib(
+	mongoCollection *mongo.Collection,
+	redis *redis.UniversalClient,
+) *SetterLib {
+	return &SetterLib{
+		mongoCollection: mongoCollection,
+		redis: CommonRedis{
+			client: redis,
+		},
+	}
 }
 
 func (sl *SetterLib) Create(*types.Entity) *types.Error {
@@ -87,8 +95,15 @@ type GetterLib struct {
 	redis       CommonRedis
 }
 
-func NewGetterLib() *GetterLib {
-	return &GetterLib{}
+func NewGetterLib(
+	redisClient redis.UniversalClient,
+) *GetterLib {
+	return &GetterLib{
+		redisClient: redisClient,
+		redis: CommonRedis{
+			client: &redisClient,
+		},
+	}
 }
 
 // secured
@@ -107,7 +122,7 @@ func GetAll(anyUUID string) ([]types.Entity, *types.Error) {
 }
 
 type CommonRedis struct {
-	client *redis.Client
+	client *redis.UniversalClient
 }
 
 func (cr *CommonRedis) Get() (*types.Entity, *types.Error) {
