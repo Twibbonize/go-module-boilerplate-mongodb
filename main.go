@@ -64,6 +64,10 @@ func (sl *SetterLib) Delete(*types.Entity) *types.Error {
 	return nil
 }
 
+func (sl *SetterLib) DeleteManyByAnyUUID(anyUUID string) *types.Error {
+	return nil
+}
+
 // secured
 func (sl *SetterLib) FindByUUID(uuid string) (*types.Entity, *types.Error) {
 	return nil, nil
