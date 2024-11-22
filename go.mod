@@ -1,4 +1,4 @@
-module github.com/lefalya/go-module-boilerplate-mongodb
+module github.com/Twibbonize/go-module-boilerplate-mongodb
 
 go 1.21.0
 

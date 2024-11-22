@@ -4,8 +4,8 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/Twibbonize/go-module-boilerplate-mongodb/types"
 	"github.com/google/uuid"
-	"github.com/lefalya/commoncrud-boilerplate-mongodb/types"
 	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -41,7 +41,7 @@ type SetterLib struct {
 }
 
 func NewSetterLib() *SetterLib {
-
+	return &SetterLib{}
 }
 
 func (sl *SetterLib) Create(*types.Entity) *types.Error {
@@ -88,7 +88,7 @@ type GetterLib struct {
 }
 
 func NewGetterLib() *GetterLib {
-
+	return &GetterLib{}
 }
 
 // secured
