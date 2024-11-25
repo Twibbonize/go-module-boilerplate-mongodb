@@ -58,10 +58,10 @@ func NewSetterLib(
 	}
 }
 
-// Create 
-//	- Insert db
-//	- Set jsonstr to cache 
-//	- Add to sorted set
+// Create
+//	1. Insert db
+//	2. Set jsonstr to cache 
+//	3. Add to sorted set
 func (sl *SetterLib) Create(entity *types.Entity) *types.Error {
 	if sl.mongoCollection == nil {
 		return &types.Error{
@@ -71,11 +71,16 @@ func (sl *SetterLib) Create(entity *types.Entity) *types.Error {
 		}
 	}
 
+	//	1. Insert db
+	sl.mongoCollection.InsertOne(context.TODO(), entity)
+
+	//	2. Set jsonstr to cache 
 	err := sl.redis.Set(entity)
 	if err != nil {
 		return err
 	}
 
+	//	3. Add to sorted set
 	err = sl.redis.SetSortedSet(entity)
 	if err != nil {
 		return err
@@ -85,8 +90,8 @@ func (sl *SetterLib) Create(entity *types.Entity) *types.Error {
 }
 
 // Update 
-//	- Update one db
-//	- Set to cache 
+//	1. Update one db
+//	2. Set to cache 
 func (sl *SetterLib) Update(entity *types.Entity) *types.Error {
 	if sl.mongoCollection == nil {
 		return &types.Error{
@@ -102,6 +107,7 @@ func (sl *SetterLib) Update(entity *types.Entity) *types.Error {
 		"randId":    entity.RandID,
 	}}
 
+	// 1. Update one db
 	_, err := sl.mongoCollection.UpdateOne(context.TODO(), filter, update)
 	if err != nil {
 		return &types.Error{
@@ -111,6 +117,7 @@ func (sl *SetterLib) Update(entity *types.Entity) *types.Error {
 		}
 	}
 
+	//	2. Set to cache 
 	setErr := sl.redis.Set(entity)
 	if setErr != nil {
 		return setErr
@@ -120,8 +127,9 @@ func (sl *SetterLib) Update(entity *types.Entity) *types.Error {
 }
 
 // Delete
-//	- Del jsonstr from cache 
-//	- Remove item from sorted set
+//	1. Delete one from db
+//	2. Del jsonstr from cache 
+//	3. Remove item from sorted set
 func (sl *SetterLib) Delete(entity *types.Entity) *types.Error {
 	if sl.mongoCollection == nil {
 		return &types.Error{
@@ -132,6 +140,8 @@ func (sl *SetterLib) Delete(entity *types.Entity) *types.Error {
 	}
 
 	filter := bson.M{"_id": entity.ID}
+
+	//	1. Delete one from db
 	_, err := sl.mongoCollection.DeleteOne(context.TODO(), filter)
 	if err != nil {
 		return &types.Error{
@@ -141,7 +151,10 @@ func (sl *SetterLib) Delete(entity *types.Entity) *types.Error {
 		}
 	}
 
+	//	2. Del jsonstr from cache 
 	sl.redis.Del(entity)
+
+	//	3. Remove item from sorted set
 	sl.redis.DeleteFromSortedSet(entity)
 
 	return nil
@@ -149,9 +162,10 @@ func (sl *SetterLib) Delete(entity *types.Entity) *types.Error {
 
 // TODO
 // DeleteManyByAnyUUID
-//	- Delete many by uuid from db
-//	- Loop to delete all cache key 
-//	- Delete sorted set key
+//	1. Find many by uuid => data
+//	2. Loop data to delete all cache key 
+//	3. Delete sorted set key
+//	4. Delete many by uuid from db
 func (sl *SetterLib) DeleteManyByAnyUUID(anyUUID string) *types.Error {
 	if sl.mongoCollection == nil {
 		return &types.Error{
@@ -162,6 +176,46 @@ func (sl *SetterLib) DeleteManyByAnyUUID(anyUUID string) *types.Error {
 	}
 
 	filter := bson.M{"anyuuid": anyUUID}
+
+	//	1. Find many by uuid => data
+	cursor, errorFindSubmissions := sl.mongoCollection.Find(
+		context.TODO(),
+		filter,
+	)
+
+	if errorFindSubmissions != nil {
+		return &types.Error{
+			Err:     errorFindSubmissions,
+			Details: "Failed to execute find on MongoDB",
+			Message: "Find many failed",
+		}
+	}
+
+	defer cursor.Close(context.TODO())
+
+
+	//	2. Loop data to delete all cache key 
+	for cursor.Next(context.TODO()) {
+
+		var entity *types.Entity
+
+		errorDecode := cursor.Decode(entity)
+
+		if errorDecode != nil {
+			continue
+		}
+
+		sl.redis.Del(entity)
+		sl.redis.DelRandId(entity)
+		sl.redis.DeleteFromSortedSet(entity)
+	}
+
+
+	//	3. Delete sorted set key
+	sl.redis.DeleteSortedSet(anyUUID)
+
+
+	//	4. Delete many by uuid from db
 	_, err := sl.mongoCollection.DeleteMany(context.TODO(), filter)
 	if err != nil {
 		return &types.Error{
@@ -176,19 +230,20 @@ func (sl *SetterLib) DeleteManyByAnyUUID(anyUUID string) *types.Error {
 
 
 // TODO
-// FindByUUID: secured
-//	- Find one by uuid from db
-//	- Set to cache
-//	- Set randid translation
-func (sl *SetterLib) FindByUUID(uuid string) (*types.Entity, *types.Error) {
+// FindByUUID: secure
+//	1. Find one by uuid from db
+//	2. Set to cache
+//	3. Set randid translation
+// If secure = false, then all uuid (UUID, campaignUUID, anyUUID) = "" (Empty string)
+func (sl *SetterLib) FindByUUID(uuid string, secure bool) (*types.Entity, *types.Error) {
 	return nil, nil
 }
 
 // TODO
 // FindByRandID
-//	- Find one by randid from db
-//	- Set to cache
-//	- Set randid translation
+//	1. Find one by randid from db
+//	2. Set to cache
+//	3. Set randid translation
 func (sl *SetterLib) FindByRandID(randid string) (*types.Entity, *types.Error) {
 	return nil, nil
 }
@@ -196,12 +251,16 @@ func (sl *SetterLib) FindByRandID(randid string) (*types.Entity, *types.Error) {
 
 // TODO
 // SeedLinked
+//	1. Find many from db => data
+// 2. Loop all data ingest each item & add to sorted set
 func (sl *SetterLib) SeedLinked(subtraction int64, latestItemHex string, lastUUID string, anyUUID string) *types.Error {
 	return nil
 }
 
 // TODO
 // SeedAll
+//	1. Find many from db => data
+// 2. Loop all data ingest each item & add to sorted set
 func (sl *SetterLib) SeedAll(anyUUID string) *types.Error {
 	return nil
 }
@@ -225,8 +284,10 @@ func NewGetterLib(
 
 
 // TODO
-// GetByUUID: secured
-func (gl *GetterLib) GetByUUID(uuid string) (*types.Entity, *types.Error) {
+// GetByUUID: secure
+// Get cache by uuid
+// If secure = false, then all uuid (UUID, campaignUUID, anyUUID) = "" (Empty string)
+func (gl *GetterLib) GetByUUID(uuid string, secure bool) (*types.Entity, *types.Error) {
 	var entity types.Entity
 	err := (*gl.redisClient).Get(context.TODO(), uuid).Scan(&entity)
 	if err != nil {
@@ -243,6 +304,7 @@ func (gl *GetterLib) GetByUUID(uuid string) (*types.Entity, *types.Error) {
 
 // TODO
 // GetByRandID
+// Get cache by randid
 func (gl *GetterLib) GetByRandID(randid string) (*types.Entity, *types.Error) {
 	var entity types.Entity
 	err := (*gl.redisClient).Get(context.TODO(), randid).Scan(&entity)
@@ -260,6 +322,7 @@ func (gl *GetterLib) GetByRandID(randid string) (*types.Entity, *types.Error) {
 
 // TODO
 // GetLinked
+// Zrevrange base on provided lastRandIds
 func (gl *GetterLib) GetLinked(anyUUID string, lastRandIds []string) ([]types.Entity, string, int64, *types.Error) {
 	// Example implementation to fetch linked items
 	var entities []types.Entity
@@ -280,6 +343,7 @@ func (gl *GetterLib) GetLinked(anyUUID string, lastRandIds []string) ([]types.En
 
 // TODO
 // GetAll
+// Zrevrange all
 func GetAll(anyUUID string) ([]types.Entity, *types.Error) {
 	return nil, nil
 }
@@ -288,6 +352,8 @@ type CommonRedis struct {
 	client *redis.UniversalClient
 }
 
+
+// Get data
 func (cr CommonRedis) Get(key string) (*types.Entity, *types.Error) {
 	var entity types.Entity
 	err := (*cr.client).Get(context.TODO(), key).Scan(&entity)
@@ -302,7 +368,7 @@ func (cr CommonRedis) Get(key string) (*types.Entity, *types.Error) {
 }
 
 // TODO
-// Set
+// Set data
 func (cr CommonRedis) Set(entity *types.Entity) *types.Error {
 
 	entityJsonString, errorMarshall := json.Marshal(entity)
@@ -330,7 +396,7 @@ func (cr CommonRedis) Set(entity *types.Entity) *types.Error {
 
 
 // TODO
-// Del
+// Del data
 func (cr CommonRedis) Del(entity *types.Entity) *types.Error {
 	key := "submission:" + entity.UUID
 
@@ -348,6 +414,7 @@ func (cr CommonRedis) Del(entity *types.Entity) *types.Error {
 
 // TODO
 // SetRandID
+// Set translate key randid to uuid
 func (cr CommonRedis) SetRandID(types * types.Entity) *types.Error {
 	return nil
 }
@@ -399,6 +466,6 @@ func (cr CommonRedis) TotalItemOnSortedSet(anyUUID string) (int64, *types.Error)
 
 // TODO
 // DeleteSortedSet
-func (cr CommonRedis) DeleteSortedSet(types * types.Entity) *types.Error {
+func (cr CommonRedis) DeleteSortedSet(anyUUID string) *types.Error {
 	return nil
 }
