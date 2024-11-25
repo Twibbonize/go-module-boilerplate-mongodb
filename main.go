@@ -13,6 +13,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 const (
@@ -36,7 +37,7 @@ var (
 
 	// Any module errors
 	UNAUTHORIZED = errors.New("Unauthorized!")
-	NOT_FOUND    = errors.New("Submission not found on DB!")
+	NOT_FOUND    = errors.New(" not found on DB!")
 	INVALID_UUID = errors.New("Invalid UUID!")
 
 	// MongoDB errors
@@ -343,7 +344,6 @@ func (sl *SetterLib) FindByRandID(randid string) (*types.Entity, *types.Error) {
 	return anyModuleDb, nil
 }
 
-// TODO
 // SeedLinked
 func (sl *SetterLib) SeedLinked(subtraction int64, latestItemHex string, lastUUID string, anyUUID string) *types.Error {
 	if sl.anyModuleCollection == nil {
@@ -354,38 +354,101 @@ func (sl *SetterLib) SeedLinked(subtraction int64, latestItemHex string, lastUUI
 		}
 	}
 
-	filter := bson.M{"anyuuid": anyUUID}
+	var cursor *mongo.Cursor
+	var filter bson.D
+	var anyModules []types.Entity
 
-	//	1. Find many by uuid => data
-	cursor, errorFind := sl.anyModuleCollection.Find(
+	findOptions := options.Find()
+	findOptions.SetSort(bson.D{{"_id", -1}})
+
+	if subtraction > 0 {
+
+		lastFetchedObjectId, errorConvertHex := primitive.ObjectIDFromHex(latestItemHex)
+
+		if errorConvertHex != nil {
+			return &types.Error{
+				Err:     MONGODB_FATAL_ERROR,
+				Details: errorConvertHex.Error(),
+				Message: "Unable to SeedLinked module",
+			}
+		}
+
+		numberOfRecordsToFill := DATA_PER_PAGE - subtraction
+
+		findOptions.SetLimit(int64(numberOfRecordsToFill))
+
+		filter = bson.D{{"$and",
+			bson.A{
+				bson.D{{"anyuuid", anyUUID}},
+				bson.D{{"_id", bson.D{{"$lt", lastFetchedObjectId}}}},
+			},
+		}}
+	} else {
+
+		findOptions.SetLimit(int64(DATA_PER_PAGE))
+
+		if lastUUID != "" {
+
+			// findOne validLastUUID first
+
+			anyModule, errorFind := sl.FindByUUID(lastUUID, true)
+
+			if errorFind != nil {
+				return errorFind
+			}
+
+			anyModuleID := anyModule.ID
+
+			filter = bson.D{{"$and",
+				bson.A{
+					bson.D{{"anyuuid", anyUUID}},
+					bson.D{{"_id", bson.D{{"$lt", anyModuleID}}}},
+				},
+			}}
+
+		} else {
+
+			// fetch anyModules from beginning
+			filter = bson.D{{"anyuuid", anyUUID}}
+		}
+	}
+
+	var errorFinds error
+
+	cursor, errorFinds = sl.anyModuleCollection.Find(
 		context.TODO(),
 		filter,
+		findOptions,
 	)
 
-	if errorFind != nil {
+	if errorFinds != nil {
 		return &types.Error{
-			Err:     errorFind,
-			Details: "Failed to execute find on MongoDB",
-			Message: "Find many failed",
+			Err:     MONGODB_FATAL_ERROR,
+			Details: errorFinds.Error(),
+			Message: "Unable to SeedLinked module",
 		}
 	}
 
 	defer cursor.Close(context.TODO())
 
-	// 2. Loop all data ingest each item & add to sorted set
 	for cursor.Next(context.TODO()) {
 
-		var anyModule *types.Entity
-
-		errorDecode := cursor.Decode(anyModule)
+		var anyModule types.Entity
+		errorDecode := cursor.Decode(&anyModule)
 
 		if errorDecode != nil {
 			continue
 		}
 
-		sl.redis.Set(anyModule)
-		sl.redis.SetRandID(anyModule)
-		sl.redis.SetSortedSet(anyModule)
+		sl.redis.Set(&anyModule)
+		sl.redis.SetRandID(&anyModule)
+		sl.redis.SetSortedSet(&anyModule)
+
+		anyModules = append(anyModules, anyModule)
+	}
+
+	if len(anyModules)  == 0 {
+		sl.redis.SetSettled(anyUUID)
 	}
 
 	return nil
@@ -493,31 +556,125 @@ func (gl *GetterLib) GetByRandID(randid string) (*types.Entity, *types.Error) {
 	return &anyModule, nil
 }
 
-// TODO
 // GetLinked
 // Zrevrange base on provided lastRandIds
 func (gl *GetterLib) GetLinked(anyUUID string, lastRandIds []string) ([]types.Entity, string, int64, *types.Error) {
-	// Example implementation to fetch linked items
-	var module []types.Entity
-	for _, randId := range lastRandIds {
-		anyModule, err := gl.GetByRandID(randId)
-		if err != nil {
-			continue // Skip any failed retrievals
+
+	sortedSetKey := "sortedset:" + anyUUID
+
+	var anyModules []types.Entity
+	var validLastUUID string
+	start := int64(0)
+	stop := int64(DATA_PER_PAGE)
+
+	for i := len(lastRandIds) - 1; i >= 0; i-- {
+
+		anyModule, err := gl.GetByRandID(lastRandIds[i])
+
+		if err != nil{
+			continue
 		}
-		module = append(module, *anyModule)
+
+		rank := (*gl.redisClient).ZRevRank(context.TODO(), sortedSetKey, anyModule.UUID)
+
+		if rank.Err() == nil {
+			validLastUUID = anyModule.UUID
+			start = rank.Val() + 1
+			stop = start + DATA_PER_PAGE - 1
+			break
+		}
 	}
 
-	nextCursor := "" // logic to compute next cursor
-	totalCount := int64(len(module))
+	totalItem := gl.redis.TotalItemOnSortedSet(anyUUID)
 
-	return module, nextCursor, totalCount, nil
+	if totalItem == 0 {
+		return anyModules, validLastUUID, 0, nil
+	}
+
+	listUUID := (*gl.redisClient).ZRevRange(
+		context.TODO(),
+		sortedSetKey,
+		start,
+		stop,
+	)
+
+	if listUUID.Err() != nil {
+		return nil, "", 0, &types.Error{
+			Err:     REDIS_FATAL_ERROR,
+			Details: listUUID.Err().Error(),
+			Message: "GetAll operation failed",
+		}
+	}
+
+	(*gl.redisClient).Expire(
+		context.TODO(),
+		sortedSetKey,
+		SORTED_SET_TTL,
+	)
+
+	for i := 0; i < len(listUUID.Val()); i++ {
+
+		uuid := listUUID.Val()[i]
+
+		anyModule, errGet := gl.redis.Get(uuid)
+
+		if errGet != nil {
+			continue
+		}
+
+		anyModules = append(anyModules, *anyModule)
+	}
+
+	return anyModules, validLastUUID, start, nil
 }
 
-// TODO
 // GetAll
-// Zrevrange all
-func GetAll(anyUUID string) ([]types.Entity, *types.Error) {
-	return nil, nil
+func (gl *GetterLib) GetAll(anyUUID string) ([]types.Entity, *types.Error) {
+	var anyModules []types.Entity
+
+	totalItem := gl.redis.TotalItemOnSortedSet(anyUUID)
+
+	if totalItem == 0 {
+		return anyModules, nil
+	}
+
+	sortedSetKey := "sortedset:" + anyUUID
+	
+	listUUID := (*gl.redisClient).ZRevRange(
+		context.TODO(),
+		sortedSetKey,
+		0,
+		-1,
+	)
+
+	if listUUID.Err() != nil {
+		return nil, &types.Error{
+			Err:     REDIS_FATAL_ERROR,
+			Details: listUUID.Err().Error(),
+			Message: "GetAll operation failed",
+		}
+	}
+
+	(*gl.redisClient).Expire(
+		context.TODO(),
+		sortedSetKey,
+		SORTED_SET_TTL,
+	)
+
+	for i := 0; i < len(listUUID.Val()); i++ {
+
+		uuid := listUUID.Val()[i]
+
+		anyModule, errGet := gl.redis.Get(uuid)
+
+		if errGet != nil {
+			continue
+		}
+
+		anyModules = append(anyModules, *anyModule)
+	}
+
+	return anyModules, nil
 }
 
 type CommonRedis struct {
