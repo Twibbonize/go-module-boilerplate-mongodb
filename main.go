@@ -40,17 +40,17 @@ func Init() (*types.Entity, *types.Error) {
 }
 
 type SetterLib struct {
-	mongoCollection *mongo.Collection
+	anyModuleCollection *mongo.Collection
 	redisClient *redis.UniversalClient
 	redis           CommonRedis
 }
 
 func NewSetterLib(
-	mongoCollection *mongo.Collection,
+	anyModuleCollection *mongo.Collection,
 	redis *redis.UniversalClient,
 ) *SetterLib {
 	return &SetterLib{
-		mongoCollection: mongoCollection,
+		anyModuleCollection: anyModuleCollection,
 		redisClient: redis,
 		redis: CommonRedis{
 			client: redis,
@@ -63,16 +63,16 @@ func NewSetterLib(
 //	2. Set jsonstr to cache 
 //	3. Add to sorted set
 func (sl *SetterLib) Create(entity *types.Entity) *types.Error {
-	if sl.mongoCollection == nil {
+	if sl.anyModuleCollection == nil {
 		return &types.Error{
-			Err:     errors.New("mongoCollection is nil"),
-			Details: "The mongoCollection field is not initialized in SetterLib",
+			Err:     errors.New("anyModuleCollection is nil"),
+			Details: "The anyModuleCollection field is not initialized in SetterLib",
 			Message: "can't work with 42",
 		}
 	}
 
 	//	1. Insert db
-	sl.mongoCollection.InsertOne(context.TODO(), entity)
+	sl.anyModuleCollection.InsertOne(context.TODO(), entity)
 
 	//	2. Set jsonstr to cache 
 	err := sl.redis.Set(entity)
@@ -93,10 +93,10 @@ func (sl *SetterLib) Create(entity *types.Entity) *types.Error {
 //	1. Update one db
 //	2. Set to cache 
 func (sl *SetterLib) Update(entity *types.Entity) *types.Error {
-	if sl.mongoCollection == nil {
+	if sl.anyModuleCollection == nil {
 		return &types.Error{
-			Err:     errors.New("mongoCollection is nil"),
-			Details: "The mongoCollection field is not initialized in SetterLib",
+			Err:     errors.New("anyModuleCollection is nil"),
+			Details: "The anyModuleCollection field is not initialized in SetterLib",
 			Message: "Unable to update entity",
 		}
 	}
@@ -108,7 +108,7 @@ func (sl *SetterLib) Update(entity *types.Entity) *types.Error {
 	}}
 
 	// 1. Update one db
-	_, err := sl.mongoCollection.UpdateOne(context.TODO(), filter, update)
+	_, err := sl.anyModuleCollection.UpdateOne(context.TODO(), filter, update)
 	if err != nil {
 		return &types.Error{
 			Err:     err,
@@ -131,10 +131,10 @@ func (sl *SetterLib) Update(entity *types.Entity) *types.Error {
 //	2. Del jsonstr from cache 
 //	3. Remove item from sorted set
 func (sl *SetterLib) Delete(entity *types.Entity) *types.Error {
-	if sl.mongoCollection == nil {
+	if sl.anyModuleCollection == nil {
 		return &types.Error{
-			Err:     errors.New("mongoCollection is nil"),
-			Details: "The mongoCollection field is not initialized in SetterLib",
+			Err:     errors.New("anyModuleCollection is nil"),
+			Details: "The anyModuleCollection field is not initialized in SetterLib",
 			Message: "Unable to delete entity",
 		}
 	}
@@ -142,7 +142,7 @@ func (sl *SetterLib) Delete(entity *types.Entity) *types.Error {
 	filter := bson.M{"_id": entity.ID}
 
 	//	1. Delete one from db
-	_, err := sl.mongoCollection.DeleteOne(context.TODO(), filter)
+	_, err := sl.anyModuleCollection.DeleteOne(context.TODO(), filter)
 	if err != nil {
 		return &types.Error{
 			Err:     err,
@@ -167,10 +167,10 @@ func (sl *SetterLib) Delete(entity *types.Entity) *types.Error {
 //	3. Delete sorted set key
 //	4. Delete many by uuid from db
 func (sl *SetterLib) DeleteManyByAnyUUID(anyUUID string) *types.Error {
-	if sl.mongoCollection == nil {
+	if sl.anyModuleCollection == nil {
 		return &types.Error{
-			Err:     errors.New("mongoCollection is nil"),
-			Details: "The mongoCollection field is not initialized in SetterLib",
+			Err:     errors.New("anyModuleCollection is nil"),
+			Details: "The anyModuleCollection field is not initialized in SetterLib",
 			Message: "Unable to delete entities",
 		}
 	}
@@ -178,7 +178,7 @@ func (sl *SetterLib) DeleteManyByAnyUUID(anyUUID string) *types.Error {
 	filter := bson.M{"anyuuid": anyUUID}
 
 	//	1. Find many by uuid => data
-	cursor, errorFindSubmissions := sl.mongoCollection.Find(
+	cursor, errorFindSubmissions := sl.anyModuleCollection.Find(
 		context.TODO(),
 		filter,
 	)
@@ -216,7 +216,7 @@ func (sl *SetterLib) DeleteManyByAnyUUID(anyUUID string) *types.Error {
 
 
 	//	4. Delete many by uuid from db
-	_, err := sl.mongoCollection.DeleteMany(context.TODO(), filter)
+	_, err := sl.anyModuleCollection.DeleteMany(context.TODO(), filter)
 	if err != nil {
 		return &types.Error{
 			Err:     err,
@@ -262,6 +262,64 @@ func (sl *SetterLib) SeedLinked(subtraction int64, latestItemHex string, lastUUI
 //	1. Find many from db => data
 // 2. Loop all data ingest each item & add to sorted set
 func (sl *SetterLib) SeedAll(anyUUID string) *types.Error {
+	if sl.anyModuleCollection == nil {
+		return &types.Error{
+			Err:     errors.New("anyModuleCollection is nil"),
+			Details: "The anyModuleCollection field is not initialized in SetterLib",
+			Message: "Unable to delete entities",
+		}
+	}
+
+	filter := bson.M{"anyuuid": anyUUID}
+
+	//	1. Find many by uuid => data
+	cursor, errorFindSubmissions := sl.anyModuleCollection.Find(
+		context.TODO(),
+		filter,
+	)
+
+	if errorFindSubmissions != nil {
+		return &types.Error{
+			Err:     errorFindSubmissions,
+			Details: "Failed to execute find on MongoDB",
+			Message: "Find many failed",
+		}
+	}
+
+	defer cursor.Close(context.TODO())
+
+
+	//	2. Loop data to delete all cache key 
+	for cursor.Next(context.TODO()) {
+
+		var entity *types.Entity
+
+		errorDecode := cursor.Decode(entity)
+
+		if errorDecode != nil {
+			continue
+		}
+
+		sl.redis.Del(entity)
+		sl.redis.DelRandId(entity)
+		sl.redis.DeleteFromSortedSet(entity)
+	}
+
+
+	//	3. Delete sorted set key
+	sl.redis.DeleteSortedSet(anyUUID)
+
+
+	//	4. Delete many by uuid from db
+	_, err := sl.anyModuleCollection.DeleteMany(context.TODO(), filter)
+	if err != nil {
+		return &types.Error{
+			Err:     err,
+			Details: "Failed to execute delete on MongoDB",
+			Message: "Delete many failed",
+		}
+	}
+
 	return nil
 }
 
