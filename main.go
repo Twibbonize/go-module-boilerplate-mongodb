@@ -15,6 +15,53 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
+const (
+	// Configurations
+	LAST_UUID_TOTAL = 5
+	DATA_PER_PAGE   = 45
+	RAND_ID_LENGTH  = 16
+	BLANK           = ""
+
+	DAY_TTL            = 24 * time.Hour
+	INDIVIDUAL_KEY_TTL = DAY_TTL * 7
+	SORTED_SET_TTL     = DAY_TTL * 2
+
+	// log signals
+	ANYMODULE_CREATED = "anymodule-created"
+	ANYMODULE_UPDATED = "anymodule-updated"
+	ANYMODULE_DELETED = "anymodule-deleted"
+)
+
+var (
+
+	// Any module errors
+	UNAUTHORIZED = errors.New("Unauthorized!")
+	NOT_FOUND    = errors.New("Submission not found on DB!")
+	INVALID_UUID = errors.New("Invalid UUID!")
+
+	// MongoDB errors
+	MONGODB_FATAL_ERROR     = errors.New("MongoDB fatal error!")
+	MONGODB_ERROR_DUPLICATE = errors.New("Error duplicate!")
+	INVALID_HEX             = errors.New("Invalid object id hex format!")
+	LAST_UUID_NOT_FOUND     = errors.New("Last UUID not found!")
+
+	// Redis errors
+	REDIS_FATAL_ERROR        = errors.New("Redis fatal error!")
+	RANDID_KEY_NOT_FOUND     = errors.New("RandId key not found!")
+	REDIS_KEY_NOT_FOUND      = errors.New("Redis key not found")
+	INDIVIDUAL_KEY_NOT_FOUND = errors.New("Individual key not found")
+	PARSE_JSON_FATAL_ERROR   = errors.New("Parse json fatal error!")
+	JSON_MARSHAL_FATAL_ERROR = errors.New("JSON Marshalling fatal error!")
+
+	// Pagination errors
+	TOO_MUCH_LAST_UUID     = errors.New("Too much last UUID!")
+	INSUFFICIENT_LAST_UUID = errors.New("Insufficient last UUID!")
+
+	// Presign
+	AWS_BUCKET_AUTH    = errors.New("Error authentication s3")
+	AWS_BUCKET_PRESIGN = errors.New("Error creating presign s3")
+)
+
 func generateRandomString(length int) string {
 	characters := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	result := make([]byte, length)
@@ -41,8 +88,8 @@ func Init() (*types.Entity, *types.Error) {
 
 type SetterLib struct {
 	anyModuleCollection *mongo.Collection
-	redisClient *redis.UniversalClient
-	redis           CommonRedis
+	redisClient         *redis.UniversalClient
+	redis               CommonRedis
 }
 
 func NewSetterLib(
@@ -51,7 +98,7 @@ func NewSetterLib(
 ) *SetterLib {
 	return &SetterLib{
 		anyModuleCollection: anyModuleCollection,
-		redisClient: redis,
+		redisClient:         redis,
 		redis: CommonRedis{
 			client: redis,
 		},
@@ -59,52 +106,55 @@ func NewSetterLib(
 }
 
 // Create
-//	1. Insert db
-//	2. Set jsonstr to cache 
-//	3. Add to sorted set
-func (sl *SetterLib) Create(entity *types.Entity) *types.Error {
+//  1. Insert db
+//  2. Set jsonstr to cache
+//  3. Add to sorted set IF and only IF the sorted set exists
+func (sl *SetterLib) Create(anyModule *types.Entity) *types.Error {
 	if sl.anyModuleCollection == nil {
 		return &types.Error{
 			Err:     errors.New("anyModuleCollection is nil"),
-			Details: "The anyModuleCollection field is not initialized in SetterLib",
 			Message: "can't work with 42",
 		}
 	}
 
 	//	1. Insert db
-	sl.anyModuleCollection.InsertOne(context.TODO(), entity)
+	sl.anyModuleCollection.InsertOne(context.TODO(), anyModule)
 
-	//	2. Set jsonstr to cache 
-	err := sl.redis.Set(entity)
+	//	2. Set jsonstr to cache
+	err := sl.redis.Set(anyModule)
 	if err != nil {
 		return err
 	}
 
 	//	3. Add to sorted set
-	err = sl.redis.SetSortedSet(entity)
-	if err != nil {
-		return err
+	total := sl.redis.TotalItemOnSortedSet(anyModule.AnyUUID)
+
+	if total > 0 {
+		err = sl.redis.SetSortedSet(anyModule)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
-// Update 
-//	1. Update one db
-//	2. Set to cache 
-func (sl *SetterLib) Update(entity *types.Entity) *types.Error {
+// Update
+//  1. Update one db
+//  2. Set to cache
+func (sl *SetterLib) Update(anyModule *types.Entity) *types.Error {
 	if sl.anyModuleCollection == nil {
 		return &types.Error{
 			Err:     errors.New("anyModuleCollection is nil"),
 			Details: "The anyModuleCollection field is not initialized in SetterLib",
-			Message: "Unable to update entity",
+			Message: "Unable to update anyModule",
 		}
 	}
 
-	filter := bson.M{"_id": entity.ID}
+	filter := bson.M{"_id": anyModule.ID}
 	update := bson.M{"$set": bson.M{
 		"updatedat": time.Now().UnixMilli(),
-		"randId":    entity.RandID,
+		"randId":    anyModule.RandID,
 	}}
 
 	// 1. Update one db
@@ -117,8 +167,8 @@ func (sl *SetterLib) Update(entity *types.Entity) *types.Error {
 		}
 	}
 
-	//	2. Set to cache 
-	setErr := sl.redis.Set(entity)
+	//	2. Set to cache
+	setErr := sl.redis.Set(anyModule)
 	if setErr != nil {
 		return setErr
 	}
@@ -127,19 +177,19 @@ func (sl *SetterLib) Update(entity *types.Entity) *types.Error {
 }
 
 // Delete
-//	1. Delete one from db
-//	2. Del jsonstr from cache 
-//	3. Remove item from sorted set
-func (sl *SetterLib) Delete(entity *types.Entity) *types.Error {
+//  1. Delete one from db
+//  2. Del jsonstr from cache
+//  3. Remove item from sorted set
+func (sl *SetterLib) Delete(anyModule *types.Entity) *types.Error {
 	if sl.anyModuleCollection == nil {
 		return &types.Error{
 			Err:     errors.New("anyModuleCollection is nil"),
 			Details: "The anyModuleCollection field is not initialized in SetterLib",
-			Message: "Unable to delete entity",
+			Message: "Unable to delete anyModule",
 		}
 	}
 
-	filter := bson.M{"_id": entity.ID}
+	filter := bson.M{"_id": anyModule.ID}
 
 	//	1. Delete one from db
 	_, err := sl.anyModuleCollection.DeleteOne(context.TODO(), filter)
@@ -151,41 +201,40 @@ func (sl *SetterLib) Delete(entity *types.Entity) *types.Error {
 		}
 	}
 
-	//	2. Del jsonstr from cache 
-	sl.redis.Del(entity)
+	//	2. Del jsonstr from cache
+	sl.redis.Del(anyModule)
 
 	//	3. Remove item from sorted set
-	sl.redis.DeleteFromSortedSet(entity)
+	sl.redis.DeleteFromSortedSet(anyModule)
 
 	return nil
 }
 
-// TODO
 // DeleteManyByAnyUUID
-//	1. Find many by uuid => data
-//	2. Loop data to delete all cache key 
-//	3. Delete sorted set key
-//	4. Delete many by uuid from db
+//  1. Find many by uuid => data
+//  2. Loop data to delete all cache key
+//  3. Delete sorted set key
+//  4. Delete many by uuid from db
 func (sl *SetterLib) DeleteManyByAnyUUID(anyUUID string) *types.Error {
 	if sl.anyModuleCollection == nil {
 		return &types.Error{
 			Err:     errors.New("anyModuleCollection is nil"),
 			Details: "The anyModuleCollection field is not initialized in SetterLib",
-			Message: "Unable to delete entities",
+			Message: "Unable to delete module",
 		}
 	}
 
 	filter := bson.M{"anyuuid": anyUUID}
 
 	//	1. Find many by uuid => data
-	cursor, errorFindSubmissions := sl.anyModuleCollection.Find(
+	cursor, errorFind := sl.anyModuleCollection.Find(
 		context.TODO(),
 		filter,
 	)
 
-	if errorFindSubmissions != nil {
+	if errorFind != nil {
 		return &types.Error{
-			Err:     errorFindSubmissions,
+			Err:     errorFind,
 			Details: "Failed to execute find on MongoDB",
 			Message: "Find many failed",
 		}
@@ -193,27 +242,22 @@ func (sl *SetterLib) DeleteManyByAnyUUID(anyUUID string) *types.Error {
 
 	defer cursor.Close(context.TODO())
 
-
-	//	2. Loop data to delete all cache key 
+	//	2. Loop data to delete all cache key
 	for cursor.Next(context.TODO()) {
-
-		var entity *types.Entity
-
-		errorDecode := cursor.Decode(entity)
+		var anyModule *types.Entity
+		errorDecode := cursor.Decode(anyModule)
 
 		if errorDecode != nil {
 			continue
 		}
 
-		sl.redis.Del(entity)
-		sl.redis.DelRandId(entity)
-		sl.redis.DeleteFromSortedSet(entity)
+		sl.redis.Del(anyModule)
+		sl.redis.DelRandId(anyModule)
+		sl.redis.DeleteFromSortedSet(anyModule)
 	}
-
 
 	//	3. Delete sorted set key
 	sl.redis.DeleteSortedSet(anyUUID)
-
 
 	//	4. Delete many by uuid from db
 	_, err := sl.anyModuleCollection.DeleteMany(context.TODO(), filter)
@@ -228,59 +272,149 @@ func (sl *SetterLib) DeleteManyByAnyUUID(anyUUID string) *types.Error {
 	return nil
 }
 
-
-// TODO
 // FindByUUID: secure
-//	1. Find one by uuid from db
-//	2. Set to cache
-//	3. Set randid translation
+//  1. Find one by uuid from db
+//  2. Set to cache
+//  3. Set randid translation
+//
 // If secure = false, then all uuid (UUID, campaignUUID, anyUUID) = "" (Empty string)
 func (sl *SetterLib) FindByUUID(uuid string, secure bool) (*types.Entity, *types.Error) {
-	return nil, nil
+	if sl.anyModuleCollection == nil {
+		return nil, &types.Error{
+			Err:     MONGODB_FATAL_ERROR,
+			Message: "Nil collection",
+		}
+	}
+
+	//	1. Find one from db
+	var anyModuleDb *types.Entity
+	filter := bson.M{"uuid": uuid}
+	err := sl.anyModuleCollection.FindOne(context.TODO(), filter).Decode(anyModuleDb)
+	if err != nil {
+		return nil, &types.Error{
+			Err:     MONGODB_FATAL_ERROR,
+			Details: err.Error(),
+			Message: "Find one failed",
+		}
+	}
+
+	//  2. Set to cache
+	//  3. Set randid translation
+	sl.redis.Set(anyModuleDb)
+	sl.redis.SetRandID(anyModuleDb)
+
+	if secure == false {
+		anyModuleDb.UUID = ""
+		anyModuleDb.AnyUUID = ""
+	}
+
+	return anyModuleDb, nil
 }
 
-// TODO
 // FindByRandID
-//	1. Find one by randid from db
-//	2. Set to cache
-//	3. Set randid translation
+//  1. Find one by randid from db
+//  2. Set to cache
+//  3. Set randid translation
 func (sl *SetterLib) FindByRandID(randid string) (*types.Entity, *types.Error) {
-	return nil, nil
-}
+	if sl.anyModuleCollection == nil {
+		return nil, &types.Error{
+			Err:     MONGODB_FATAL_ERROR,
+			Message: "Nil collection",
+		}
+	}
 
+	//	1. Find one from db
+	var anyModuleDb *types.Entity
+	filter := bson.M{"randid": randid}
+	err := sl.anyModuleCollection.FindOne(context.TODO(), filter).Decode(anyModuleDb)
+	if err != nil {
+		return nil, &types.Error{
+			Err:     MONGODB_FATAL_ERROR,
+			Details: err.Error(),
+			Message: "Find one failed",
+		}
+	}
+
+	//  2. Set to cache
+	//  3. Set randid translation
+	sl.redis.Set(anyModuleDb)
+	sl.redis.SetRandID(anyModuleDb)
+
+	return anyModuleDb, nil
+}
 
 // TODO
 // SeedLinked
-//	1. Find many from db => data
-// 2. Loop all data ingest each item & add to sorted set
 func (sl *SetterLib) SeedLinked(subtraction int64, latestItemHex string, lastUUID string, anyUUID string) *types.Error {
+	if sl.anyModuleCollection == nil {
+		return &types.Error{
+			Err:     errors.New("anyModuleCollection is nil"),
+			Details: "The anyModuleCollection field is not initialized in SetterLib",
+			Message: "Unable to delete module",
+		}
+	}
+
+	filter := bson.M{"anyuuid": anyUUID}
+
+	//	1. Find many by uuid => data
+	cursor, errorFind := sl.anyModuleCollection.Find(
+		context.TODO(),
+		filter,
+	)
+
+	if errorFind != nil {
+		return &types.Error{
+			Err:     errorFind,
+			Details: "Failed to execute find on MongoDB",
+			Message: "Find many failed",
+		}
+	}
+
+	defer cursor.Close(context.TODO())
+
+	// 2. Loop all data ingest each item & add to sorted set
+	for cursor.Next(context.TODO()) {
+
+		var anyModule *types.Entity
+
+		errorDecode := cursor.Decode(anyModule)
+
+		if errorDecode != nil {
+			continue
+		}
+
+		sl.redis.Set(anyModule)
+		sl.redis.SetRandID(anyModule)
+		sl.redis.SetSortedSet(anyModule)
+	}
+
 	return nil
 }
 
-// TODO
 // SeedAll
-//	1. Find many from db => data
+//  1. Find many from db => data
+//
 // 2. Loop all data ingest each item & add to sorted set
 func (sl *SetterLib) SeedAll(anyUUID string) *types.Error {
 	if sl.anyModuleCollection == nil {
 		return &types.Error{
 			Err:     errors.New("anyModuleCollection is nil"),
 			Details: "The anyModuleCollection field is not initialized in SetterLib",
-			Message: "Unable to delete entities",
+			Message: "Unable to delete module",
 		}
 	}
 
 	filter := bson.M{"anyuuid": anyUUID}
 
 	//	1. Find many by uuid => data
-	cursor, errorFindSubmissions := sl.anyModuleCollection.Find(
+	cursor, errorFind := sl.anyModuleCollection.Find(
 		context.TODO(),
 		filter,
 	)
 
-	if errorFindSubmissions != nil {
+	if errorFind != nil {
 		return &types.Error{
-			Err:     errorFindSubmissions,
+			Err:     errorFind,
 			Details: "Failed to execute find on MongoDB",
 			Message: "Find many failed",
 		}
@@ -288,41 +422,22 @@ func (sl *SetterLib) SeedAll(anyUUID string) *types.Error {
 
 	defer cursor.Close(context.TODO())
 
-
-	//	2. Loop data to delete all cache key 
+	// 2. Loop all data ingest each item & add to sorted set
 	for cursor.Next(context.TODO()) {
-
-		var entity *types.Entity
-
-		errorDecode := cursor.Decode(entity)
+		var anyModule *types.Entity
+		errorDecode := cursor.Decode(anyModule)
 
 		if errorDecode != nil {
 			continue
 		}
 
-		sl.redis.Del(entity)
-		sl.redis.DelRandId(entity)
-		sl.redis.DeleteFromSortedSet(entity)
-	}
-
-
-	//	3. Delete sorted set key
-	sl.redis.DeleteSortedSet(anyUUID)
-
-
-	//	4. Delete many by uuid from db
-	_, err := sl.anyModuleCollection.DeleteMany(context.TODO(), filter)
-	if err != nil {
-		return &types.Error{
-			Err:     err,
-			Details: "Failed to execute delete on MongoDB",
-			Message: "Delete many failed",
-		}
+		sl.redis.Set(anyModule)
+		sl.redis.SetRandID(anyModule)
+		sl.redis.SetSortedSet(anyModule)
 	}
 
 	return nil
 }
-
 
 type GetterLib struct {
 	redisClient *redis.UniversalClient
@@ -340,64 +455,63 @@ func NewGetterLib(
 	}
 }
 
-
-// TODO
 // GetByUUID: secure
 // Get cache by uuid
 // If secure = false, then all uuid (UUID, campaignUUID, anyUUID) = "" (Empty string)
 func (gl *GetterLib) GetByUUID(uuid string, secure bool) (*types.Entity, *types.Error) {
-	var entity types.Entity
-	err := (*gl.redisClient).Get(context.TODO(), uuid).Scan(&entity)
+	var anyModule types.Entity
+	err := (*gl.redisClient).Get(context.TODO(), uuid).Scan(&anyModule)
 	if err != nil {
 		return nil, &types.Error{
 			Err:     err,
-			Details: "Failed to retrieve entity by UUID from Redis",
+			Details: "Failed to retrieve anyModule by UUID from Redis",
 			Message: "GetByUUID failed",
 		}
 	}
 
-	return &entity, nil
+	if !secure {
+		anyModule.UUID = ""
+		anyModule.AnyUUID = ""
+	}
+
+	return &anyModule, nil
 }
 
-
-// TODO
 // GetByRandID
 // Get cache by randid
 func (gl *GetterLib) GetByRandID(randid string) (*types.Entity, *types.Error) {
-	var entity types.Entity
-	err := (*gl.redisClient).Get(context.TODO(), randid).Scan(&entity)
+	var anyModule types.Entity
+	err := (*gl.redisClient).Get(context.TODO(), randid).Scan(&anyModule)
 	if err != nil {
 		return nil, &types.Error{
 			Err:     err,
-			Details: "Failed to retrieve entity by RandID from Redis",
+			Details: "Failed to retrieve anyModule by RandID from Redis",
 			Message: "GetByRandID failed",
 		}
 	}
 
-	return &entity, nil
+	return &anyModule, nil
 }
-
 
 // TODO
 // GetLinked
 // Zrevrange base on provided lastRandIds
 func (gl *GetterLib) GetLinked(anyUUID string, lastRandIds []string) ([]types.Entity, string, int64, *types.Error) {
 	// Example implementation to fetch linked items
-	var entities []types.Entity
+	var module []types.Entity
 	for _, randId := range lastRandIds {
-		entity, err := gl.GetByRandID(randId)
+		anyModule, err := gl.GetByRandID(randId)
 		if err != nil {
 			continue // Skip any failed retrievals
 		}
-		entities = append(entities, *entity)
+		module = append(module, *anyModule)
 	}
 
 	nextCursor := "" // logic to compute next cursor
-	totalCount := int64(len(entities))
+	totalCount := int64(len(module))
 
-	return entities, nextCursor, totalCount, nil
+	return module, nextCursor, totalCount, nil
 }
-
 
 // TODO
 // GetAll
@@ -410,11 +524,10 @@ type CommonRedis struct {
 	client *redis.UniversalClient
 }
 
-
 // Get data
 func (cr CommonRedis) Get(key string) (*types.Entity, *types.Error) {
-	var entity types.Entity
-	err := (*cr.client).Get(context.TODO(), key).Scan(&entity)
+	var anyModule types.Entity
+	err := (*cr.client).Get(context.TODO(), key).Scan(&anyModule)
 	if err != nil {
 		return nil, &types.Error{
 			Err:     err,
@@ -422,26 +535,25 @@ func (cr CommonRedis) Get(key string) (*types.Entity, *types.Error) {
 			Message: "Get operation failed",
 		}
 	}
-	return &entity, nil
+	return &anyModule, nil
 }
 
-// TODO
 // Set data
-func (cr CommonRedis) Set(entity *types.Entity) *types.Error {
+func (cr CommonRedis) Set(anyModule *types.Entity) *types.Error {
 
-	entityJsonString, errorMarshall := json.Marshal(entity)
+	anyModuleJsonString, errorMarshall := json.Marshal(anyModule)
 
 	if errorMarshall != nil {
 		return &types.Error{
 			Err:     errorMarshall,
-			Details: "Failed to marshal entity to JSON",
+			Details: "Failed to marshal anyModule to JSON",
 			Message: "Set operation failed",
 		}
 	}
 
-	key := "submission:" + entity.UUID
+	key := "anyModule:" + anyModule.UUID
 
-	err := (*cr.client).Set(context.TODO(), key, entityJsonString, 0).Err()
+	err := (*cr.client).Set(context.TODO(), key, anyModuleJsonString, 0).Err()
 	if err != nil {
 		return &types.Error{
 			Err:     err,
@@ -452,11 +564,9 @@ func (cr CommonRedis) Set(entity *types.Entity) *types.Error {
 	return nil
 }
 
-
-// TODO
 // Del data
-func (cr CommonRedis) Del(entity *types.Entity) *types.Error {
-	key := "submission:" + entity.UUID
+func (cr CommonRedis) Del(anyModule *types.Entity) *types.Error {
+	key := "anyModule:" + anyModule.UUID
 
 	err := (*cr.client).Del(context.TODO(), key).Err()
 	if err != nil {
@@ -470,60 +580,199 @@ func (cr CommonRedis) Del(entity *types.Entity) *types.Error {
 	return nil
 }
 
-// TODO
 // SetRandID
 // Set translate key randid to uuid
-func (cr CommonRedis) SetRandID(types * types.Entity) *types.Error {
+func (cr CommonRedis) SetRandID(anyModule *types.Entity) *types.Error {
+	key := "anyModule:uuid:" + anyModule.RandID
+
+	err := (*cr.client).Set(context.TODO(), key, anyModule.UUID, 0)
+
+	if err.Err() != nil {
+		return &types.Error{
+			Err:     REDIS_FATAL_ERROR,
+			Details: err.Err().Error(),
+			Message: "SetRandID operation failed",
+		}
+	}
 	return nil
 }
 
-// TODO
 // DelRandId
-func (cr CommonRedis) DelRandId(types * types.Entity) *types.Error {
+func (cr CommonRedis) DelRandId(anyModule *types.Entity) *types.Error {
+
+	key := "anyModule:uuid:" + anyModule.RandID
+
+	err := (*cr.client).Del(context.TODO(), key)
+
+	if err.Err() != nil {
+		return &types.Error{
+			Err:     REDIS_FATAL_ERROR,
+			Details: err.Err().Error(),
+			Message: "DelRandId operation failed",
+		}
+	}
 	return nil
 }
 
-
-// TODO
 // GetSettled
 func (cr CommonRedis) GetSettled(anyUUID string) (bool, *types.Error) {
+	key := "sortedset:" + anyUUID + ":settled"
+
+	getSortedSet := (*cr.client).Get(
+		context.TODO(),
+		key,
+	)
+
+	if getSortedSet.Err() != nil {
+		return false, &types.Error{
+			Err:     REDIS_FATAL_ERROR,
+			Details: getSortedSet.Err().Error(),
+			Message: "GetSortedSet settled operation failed",
+		}
+	}
+
+	if getSortedSet.Val() == "1" {
+		return true, nil
+	}
+
 	return false, nil
 }
 
-
-// TODO
 // SetSettled
 func (cr CommonRedis) SetSettled(anyUUID string) *types.Error {
+	key := "sortedset:" + anyUUID + ":settled"
+
+	removeSortedSet := (*cr.client).Set(
+		context.TODO(),
+		key,
+		1,
+		SORTED_SET_TTL,
+	)
+
+	if removeSortedSet.Err() != nil {
+		return &types.Error{
+			Err:     REDIS_FATAL_ERROR,
+			Details: removeSortedSet.Err().Error(),
+			Message: "DeleteSortedSet settled operation failed",
+		}
+	}
 	return nil
 }
 
-
-// TODO
 // DelSettled
 func (cr CommonRedis) DelSettled(anyUUID string) *types.Error {
+	key := "sortedset:" + anyUUID + ":settled"
+
+	removeSortedSet := (*cr.client).Del(
+		context.TODO(),
+		key,
+	)
+
+	if removeSortedSet.Err() != nil {
+		return &types.Error{
+			Err:     REDIS_FATAL_ERROR,
+			Details: removeSortedSet.Err().Error(),
+			Message: "DeleteSortedSet settled operation failed",
+		}
+	}
 	return nil
 }
 
-// TODO
 // SetSortedSet
-func (cr CommonRedis) SetSortedSet(types * types.Entity) *types.Error {
+// 1. Delete settled key
+// 2. Add to sorted set
+func (cr CommonRedis) SetSortedSet(anyModule *types.Entity) *types.Error {
+	cr.DelSettled(anyModule.AnyUUID)
+	key := "sortedset:" + anyModule.AnyUUID
+
+	sortedSetMember := redis.Z{
+		Score:  float64(anyModule.CreatedAt),
+		Member: anyModule.UUID,
+	}
+
+	setSortedSet := (*cr.client).ZAdd(
+		context.TODO(),
+		key,
+		sortedSetMember,
+	)
+
+	if setSortedSet.Err() != nil {
+		return &types.Error{
+			Err:     REDIS_FATAL_ERROR,
+			Details: setSortedSet.Err().Error(),
+			Message: "SetSortedSet operation failed",
+		}
+	}
+
+	setExpire := (*cr.client).Expire(
+		context.TODO(),
+		key,
+		SORTED_SET_TTL,
+	)
+
+	if !setExpire.Val() {
+		return &types.Error{
+			Err:     REDIS_FATAL_ERROR,
+			Details: setExpire.Err().Error(),
+			Message: "SetSortedSet operation failed",
+		}
+	}
+
 	return nil
+
 }
 
-// TODO
 // DeleteFromSortedSet
-func (cr CommonRedis) DeleteFromSortedSet(types * types.Entity) *types.Error {
+func (cr CommonRedis) DeleteFromSortedSet(anyModule *types.Entity) *types.Error {
+	key := "sortedset:" + anyModule.AnyUUID
+
+	removeFromSortedSet := (*cr.client).ZRem(
+		context.TODO(),
+		key,
+		anyModule.UUID,
+	)
+
+	if removeFromSortedSet.Err() != nil {
+
+		return &types.Error{
+			Err:     REDIS_FATAL_ERROR,
+			Details: removeFromSortedSet.Err().Error(),
+			Message: "DeleteFromSortedSet operation failed",
+		}
+	}
+
 	return nil
 }
 
-// TODO
 // TotalItemOnSortedSet
-func (cr CommonRedis) TotalItemOnSortedSet(anyUUID string) (int64, *types.Error) {
-	return 0, nil
+func (cr CommonRedis) TotalItemOnSortedSet(anyUUID string) int64 {
+	key := "sortedset:" + anyUUID
+	zCard := (*cr.client).ZCard(context.TODO(), key)
+
+	if zCard.Err() != nil {
+		return 0
+	}
+
+	return zCard.Val()
+
 }
 
-// TODO
 // DeleteSortedSet
 func (cr CommonRedis) DeleteSortedSet(anyUUID string) *types.Error {
+
+	key := "sortedset:" + anyUUID
+
+	removeSortedSet := (*cr.client).Del(
+		context.TODO(),
+		key,
+	)
+
+	if removeSortedSet.Err() != nil {
+		return &types.Error{
+			Err:     REDIS_FATAL_ERROR,
+			Details: removeSortedSet.Err().Error(),
+			Message: "DeleteSortedSet operation failed",
+		}
+	}
 	return nil
 }
