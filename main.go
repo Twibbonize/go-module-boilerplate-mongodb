@@ -147,7 +147,7 @@ func (sl *SetterLib) Delete(entity *types.Entity) *types.Error {
 	return nil
 }
 
-
+// TODO
 // DeleteManyByAnyUUID
 //	- Delete many by uuid from db
 //	- Loop to delete all cache key 
@@ -175,6 +175,7 @@ func (sl *SetterLib) DeleteManyByAnyUUID(anyUUID string) *types.Error {
 }
 
 
+// TODO
 // FindByUUID: secured
 //	- Find one by uuid from db
 //	- Set to cache
@@ -183,7 +184,7 @@ func (sl *SetterLib) FindByUUID(uuid string) (*types.Entity, *types.Error) {
 	return nil, nil
 }
 
-
+// TODO
 // FindByRandID
 //	- Find one by randid from db
 //	- Set to cache
@@ -193,11 +194,13 @@ func (sl *SetterLib) FindByRandID(randid string) (*types.Entity, *types.Error) {
 }
 
 
+// TODO
 // SeedLinked
 func (sl *SetterLib) SeedLinked(subtraction int64, latestItemHex string, lastUUID string, anyUUID string) *types.Error {
 	return nil
 }
 
+// TODO
 // SeedAll
 func (sl *SetterLib) SeedAll(anyUUID string) *types.Error {
 	return nil
@@ -221,6 +224,7 @@ func NewGetterLib(
 }
 
 
+// TODO
 // GetByUUID: secured
 func (gl *GetterLib) GetByUUID(uuid string) (*types.Entity, *types.Error) {
 	var entity types.Entity
@@ -237,6 +241,7 @@ func (gl *GetterLib) GetByUUID(uuid string) (*types.Entity, *types.Error) {
 }
 
 
+// TODO
 // GetByRandID
 func (gl *GetterLib) GetByRandID(randid string) (*types.Entity, *types.Error) {
 	var entity types.Entity
@@ -253,6 +258,7 @@ func (gl *GetterLib) GetByRandID(randid string) (*types.Entity, *types.Error) {
 }
 
 
+// TODO
 // GetLinked
 func (gl *GetterLib) GetLinked(anyUUID string, lastRandIds []string) ([]types.Entity, string, int64, *types.Error) {
 	// Example implementation to fetch linked items
@@ -272,6 +278,7 @@ func (gl *GetterLib) GetLinked(anyUUID string, lastRandIds []string) ([]types.En
 }
 
 
+// TODO
 // GetAll
 func GetAll(anyUUID string) ([]types.Entity, *types.Error) {
 	return nil, nil
@@ -294,7 +301,7 @@ func (cr CommonRedis) Get(key string) (*types.Entity, *types.Error) {
 	return &entity, nil
 }
 
-
+// TODO
 // Set
 func (cr CommonRedis) Set(entity *types.Entity) *types.Error {
 
@@ -322,6 +329,7 @@ func (cr CommonRedis) Set(entity *types.Entity) *types.Error {
 }
 
 
+// TODO
 // Del
 func (cr CommonRedis) Del(entity *types.Entity) *types.Error {
 	key := "submission:" + entity.UUID
@@ -338,54 +346,58 @@ func (cr CommonRedis) Del(entity *types.Entity) *types.Error {
 	return nil
 }
 
+// TODO
 // SetRandID
 func (cr CommonRedis) SetRandID(types * types.Entity) *types.Error {
 	return nil
 }
 
-
+// TODO
 // DelRandId
 func (cr CommonRedis) DelRandId(types * types.Entity) *types.Error {
 	return nil
 }
 
 
+// TODO
 // GetSettled
 func (cr CommonRedis) GetSettled(anyUUID string) (bool, *types.Error) {
 	return false, nil
 }
 
 
+// TODO
 // SetSettled
 func (cr CommonRedis) SetSettled(anyUUID string) *types.Error {
 	return nil
 }
 
 
+// TODO
 // DelSettled
 func (cr CommonRedis) DelSettled(anyUUID string) *types.Error {
 	return nil
 }
 
-
+// TODO
 // SetSortedSet
 func (cr CommonRedis) SetSortedSet(types * types.Entity) *types.Error {
 	return nil
 }
 
-
+// TODO
 // DeleteFromSortedSet
 func (cr CommonRedis) DeleteFromSortedSet(types * types.Entity) *types.Error {
 	return nil
 }
 
-
+// TODO
 // TotalItemOnSortedSet
 func (cr CommonRedis) TotalItemOnSortedSet(anyUUID string) (int64, *types.Error) {
 	return 0, nil
 }
 
-
+// TODO
 // DeleteSortedSet
 func (cr CommonRedis) DeleteSortedSet(types * types.Entity) *types.Error {
 	return nil
