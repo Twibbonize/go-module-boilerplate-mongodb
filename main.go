@@ -362,7 +362,6 @@ func (sl *SetterLib) SeedLinked(subtraction int64, latestItemHex string, lastUUI
 	findOptions.SetSort(bson.D{{"_id", -1}})
 
 	if subtraction > 0 {
-
 		lastFetchedObjectId, errorConvertHex := primitive.ObjectIDFromHex(latestItemHex)
 
 		if errorConvertHex != nil {
@@ -374,9 +373,7 @@ func (sl *SetterLib) SeedLinked(subtraction int64, latestItemHex string, lastUUI
 		}
 
 		numberOfRecordsToFill := DATA_PER_PAGE - subtraction
-
 		findOptions.SetLimit(int64(numberOfRecordsToFill))
-
 		filter = bson.D{{"$and",
 			bson.A{
 				bson.D{{"anyuuid", anyUUID}},
@@ -386,11 +383,9 @@ func (sl *SetterLib) SeedLinked(subtraction int64, latestItemHex string, lastUUI
 	} else {
 
 		findOptions.SetLimit(int64(DATA_PER_PAGE))
-
 		if lastUUID != "" {
 
 			// findOne validLastUUID first
-
 			anyModule, errorFind := sl.FindByUUID(lastUUID, true)
 
 			if errorFind != nil {
@@ -398,7 +393,6 @@ func (sl *SetterLib) SeedLinked(subtraction int64, latestItemHex string, lastUUI
 			}
 
 			anyModuleID := anyModule.ID
-
 			filter = bson.D{{"$and",
 				bson.A{
 					bson.D{{"anyuuid", anyUUID}},
@@ -432,7 +426,6 @@ func (sl *SetterLib) SeedLinked(subtraction int64, latestItemHex string, lastUUI
 	defer cursor.Close(context.TODO())
 
 	for cursor.Next(context.TODO()) {
-
 		var anyModule types.Entity
 		errorDecode := cursor.Decode(&anyModule)
 
@@ -443,7 +436,6 @@ func (sl *SetterLib) SeedLinked(subtraction int64, latestItemHex string, lastUUI
 		sl.redis.Set(&anyModule)
 		sl.redis.SetRandID(&anyModule)
 		sl.redis.SetSortedSet(&anyModule)
-
 		anyModules = append(anyModules, anyModule)
 	}
 
@@ -561,14 +553,12 @@ func (gl *GetterLib) GetByRandID(randid string) (*types.Entity, *types.Error) {
 func (gl *GetterLib) GetLinked(anyUUID string, lastRandIds []string) ([]types.Entity, string, int64, *types.Error) {
 
 	sortedSetKey := "sortedset:" + anyUUID
-
 	var anyModules []types.Entity
 	var validLastUUID string
 	start := int64(0)
 	stop := int64(DATA_PER_PAGE)
 
 	for i := len(lastRandIds) - 1; i >= 0; i-- {
-
 		anyModule, err := gl.GetByRandID(lastRandIds[i])
 
 		if err != nil{
@@ -613,9 +603,7 @@ func (gl *GetterLib) GetLinked(anyUUID string, lastRandIds []string) ([]types.En
 	)
 
 	for i := 0; i < len(listUUID.Val()); i++ {
-
 		uuid := listUUID.Val()[i]
-
 		anyModule, errGet := gl.redis.Get(uuid)
 
 		if errGet != nil {
@@ -633,13 +621,12 @@ func (gl *GetterLib) GetAll(anyUUID string) ([]types.Entity, *types.Error) {
 	var anyModules []types.Entity
 
 	totalItem := gl.redis.TotalItemOnSortedSet(anyUUID)
+	sortedSetKey := "sortedset:" + anyUUID
 
 	if totalItem == 0 {
 		return anyModules, nil
 	}
 
-	sortedSetKey := "sortedset:" + anyUUID
-	
 	listUUID := (*gl.redisClient).ZRevRange(
 		context.TODO(),
 		sortedSetKey,
@@ -662,9 +649,7 @@ func (gl *GetterLib) GetAll(anyUUID string) ([]types.Entity, *types.Error) {
 	)
 
 	for i := 0; i < len(listUUID.Val()); i++ {
-
 		uuid := listUUID.Val()[i]
-
 		anyModule, errGet := gl.redis.Get(uuid)
 
 		if errGet != nil {
@@ -699,7 +684,6 @@ func (cr CommonRedis) Get(key string) (*types.Entity, *types.Error) {
 func (cr CommonRedis) Set(anyModule *types.Entity) *types.Error {
 
 	anyModuleJsonString, errorMarshall := json.Marshal(anyModule)
-
 	if errorMarshall != nil {
 		return &types.Error{
 			Err:     errorMarshall,
@@ -709,7 +693,6 @@ func (cr CommonRedis) Set(anyModule *types.Entity) *types.Error {
 	}
 
 	key := "anyModule:" + anyModule.UUID
-
 	err := (*cr.client).Set(context.TODO(), key, anyModuleJsonString, 0).Err()
 	if err != nil {
 		return &types.Error{
@@ -724,7 +707,6 @@ func (cr CommonRedis) Set(anyModule *types.Entity) *types.Error {
 // Del data
 func (cr CommonRedis) Del(anyModule *types.Entity) *types.Error {
 	key := "anyModule:" + anyModule.UUID
-
 	err := (*cr.client).Del(context.TODO(), key).Err()
 	if err != nil {
 		return &types.Error{
@@ -741,7 +723,6 @@ func (cr CommonRedis) Del(anyModule *types.Entity) *types.Error {
 // Set translate key randid to uuid
 func (cr CommonRedis) SetRandID(anyModule *types.Entity) *types.Error {
 	key := "anyModule:uuid:" + anyModule.RandID
-
 	err := (*cr.client).Set(context.TODO(), key, anyModule.UUID, 0)
 
 	if err.Err() != nil {
@@ -758,7 +739,6 @@ func (cr CommonRedis) SetRandID(anyModule *types.Entity) *types.Error {
 func (cr CommonRedis) DelRandId(anyModule *types.Entity) *types.Error {
 
 	key := "anyModule:uuid:" + anyModule.RandID
-
 	err := (*cr.client).Del(context.TODO(), key)
 
 	if err.Err() != nil {
@@ -774,7 +754,6 @@ func (cr CommonRedis) DelRandId(anyModule *types.Entity) *types.Error {
 // GetSettled
 func (cr CommonRedis) GetSettled(anyUUID string) (bool, *types.Error) {
 	key := "sortedset:" + anyUUID + ":settled"
-
 	getSortedSet := (*cr.client).Get(
 		context.TODO(),
 		key,
@@ -798,7 +777,6 @@ func (cr CommonRedis) GetSettled(anyUUID string) (bool, *types.Error) {
 // SetSettled
 func (cr CommonRedis) SetSettled(anyUUID string) *types.Error {
 	key := "sortedset:" + anyUUID + ":settled"
-
 	removeSortedSet := (*cr.client).Set(
 		context.TODO(),
 		key,
@@ -819,7 +797,6 @@ func (cr CommonRedis) SetSettled(anyUUID string) *types.Error {
 // DelSettled
 func (cr CommonRedis) DelSettled(anyUUID string) *types.Error {
 	key := "sortedset:" + anyUUID + ":settled"
-
 	removeSortedSet := (*cr.client).Del(
 		context.TODO(),
 		key,
@@ -882,7 +859,6 @@ func (cr CommonRedis) SetSortedSet(anyModule *types.Entity) *types.Error {
 // DeleteFromSortedSet
 func (cr CommonRedis) DeleteFromSortedSet(anyModule *types.Entity) *types.Error {
 	key := "sortedset:" + anyModule.AnyUUID
-
 	removeFromSortedSet := (*cr.client).ZRem(
 		context.TODO(),
 		key,
@@ -918,7 +894,6 @@ func (cr CommonRedis) TotalItemOnSortedSet(anyUUID string) int64 {
 func (cr CommonRedis) DeleteSortedSet(anyUUID string) *types.Error {
 
 	key := "sortedset:" + anyUUID
-
 	removeSortedSet := (*cr.client).Del(
 		context.TODO(),
 		key,
