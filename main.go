@@ -253,7 +253,6 @@ func (sl *SetterLib) DeleteManyByAnyUUID(anyUUID string) *types.Error {
 		}
 
 		sl.redis.Del(anyModule)
-		sl.redis.DelRandId(anyModule)
 		sl.redis.DeleteFromSortedSet(anyModule)
 	}
 
@@ -273,13 +272,7 @@ func (sl *SetterLib) DeleteManyByAnyUUID(anyUUID string) *types.Error {
 	return nil
 }
 
-// FindByUUID: secure
-//  1. Find one by uuid from db
-//  2. Set to cache
-//  3. Set randid translation
-//
-// If secure = false, then all uuid (UUID, campaignUUID, anyUUID) = "" (Empty string)
-func (sl *SetterLib) FindByUUID(uuid string, secure bool) (*types.Entity, *types.Error) {
+func (sl *SetterLib) FindByUUID(uuid string) (*types.Entity, *types.Error) {
 	if sl.anyModuleCollection == nil {
 		return nil, &types.Error{
 			Err:     MONGODB_FATAL_ERROR,
@@ -287,7 +280,6 @@ func (sl *SetterLib) FindByUUID(uuid string, secure bool) (*types.Entity, *types
 		}
 	}
 
-	//	1. Find one from db
 	var anyModuleDb *types.Entity
 	filter := bson.M{"uuid": uuid}
 	err := sl.anyModuleCollection.FindOne(context.TODO(), filter).Decode(anyModuleDb)
@@ -299,23 +291,9 @@ func (sl *SetterLib) FindByUUID(uuid string, secure bool) (*types.Entity, *types
 		}
 	}
 
-	//  2. Set to cache
-	//  3. Set randid translation
-	sl.redis.Set(anyModuleDb)
-	sl.redis.SetRandID(anyModuleDb)
-
-	if secure == false {
-		anyModuleDb.UUID = ""
-		anyModuleDb.AnyUUID = ""
-	}
-
 	return anyModuleDb, nil
 }
 
-// FindByRandID
-//  1. Find one by randid from db
-//  2. Set to cache
-//  3. Set randid translation
 func (sl *SetterLib) FindByRandID(randid string) (*types.Entity, *types.Error) {
 	if sl.anyModuleCollection == nil {
 		return nil, &types.Error{
@@ -336,13 +314,21 @@ func (sl *SetterLib) FindByRandID(randid string) (*types.Entity, *types.Error) {
 		}
 	}
 
-	//  2. Set to cache
-	//  3. Set randid translation
-	sl.redis.Set(anyModuleDb)
-	sl.redis.SetRandID(anyModuleDb)
-
 	return anyModuleDb, nil
 }
+
+func (sl *SetterLib) SeedByRandID(randId string) (*types.Entity, *types.Error) {
+	
+	anyModuleDb, errorFind := sl.FindByRandID(randId)
+
+	if errorFind != nil {
+		return nil, errorFind
+	}
+
+	sl.redis.Set(anyModuleDb)
+	return anyModuleDb, nil
+}
+
 
 // SeedLinked
 func (sl *SetterLib) SeedLinked(subtraction int64, latestItemHex string, lastUUID string, anyUUID string) *types.Error {
@@ -386,7 +372,7 @@ func (sl *SetterLib) SeedLinked(subtraction int64, latestItemHex string, lastUUI
 		if lastUUID != "" {
 
 			// findOne validLastUUID first
-			anyModule, errorFind := sl.FindByUUID(lastUUID, true)
+			anyModule, errorFind := sl.FindByUUID(lastUUID)
 
 			if errorFind != nil {
 				return errorFind
@@ -434,7 +420,6 @@ func (sl *SetterLib) SeedLinked(subtraction int64, latestItemHex string, lastUUI
 		}
 
 		sl.redis.Set(&anyModule)
-		sl.redis.SetRandID(&anyModule)
 		sl.redis.SetSortedSet(&anyModule)
 		anyModules = append(anyModules, anyModule)
 	}
@@ -487,9 +472,10 @@ func (sl *SetterLib) SeedAll(anyUUID string) *types.Error {
 		}
 
 		sl.redis.Set(anyModule)
-		sl.redis.SetRandID(anyModule)
 		sl.redis.SetSortedSet(anyModule)
 	}
+
+	sl.redis.SetSettled(anyUUID)
 
 	return nil
 }
@@ -510,31 +496,9 @@ func NewGetterLib(
 	}
 }
 
-// GetByUUID: secure
-// Get cache by uuid
-// If secure = false, then all uuid (UUID, campaignUUID, anyUUID) = "" (Empty string)
-func (gl *GetterLib) GetByUUID(uuid string, secure bool) (*types.Entity, *types.Error) {
-	var anyModule types.Entity
-	err := (*gl.redisClient).Get(context.TODO(), uuid).Scan(&anyModule)
-	if err != nil {
-		return nil, &types.Error{
-			Err:     err,
-			Details: "Failed to retrieve anyModule by UUID from Redis",
-			Message: "GetByUUID failed",
-		}
-	}
-
-	if !secure {
-		anyModule.UUID = ""
-		anyModule.AnyUUID = ""
-	}
-
-	return &anyModule, nil
-}
-
 // GetByRandID
 // Get cache by randid
-func (gl *GetterLib) GetByRandID(randid string) (*types.Entity, *types.Error) {
+func (gl *GetterLib) Get(randid string) (*types.Entity, *types.Error) {
 	var anyModule types.Entity
 	err := (*gl.redisClient).Get(context.TODO(), randid).Scan(&anyModule)
 	if err != nil {
@@ -554,21 +518,21 @@ func (gl *GetterLib) GetLinked(anyUUID string, lastRandIds []string) ([]types.En
 
 	sortedSetKey := "sortedset:" + anyUUID
 	var anyModules []types.Entity
-	var validLastUUID string
+	var validLastRandId string
 	start := int64(0)
 	stop := int64(DATA_PER_PAGE)
 
 	for i := len(lastRandIds) - 1; i >= 0; i-- {
-		anyModule, err := gl.GetByRandID(lastRandIds[i])
+		anyModule, err := gl.Get(lastRandIds[i])
 
 		if err != nil{
 			continue
 		}
 
-		rank := (*gl.redisClient).ZRevRank(context.TODO(), sortedSetKey, anyModule.UUID)
+		rank := (*gl.redisClient).ZRevRank(context.TODO(), sortedSetKey, anyModule.RandID)
 
 		if rank.Err() == nil {
-			validLastUUID = anyModule.UUID
+			validLastRandId = anyModule.RandID
 			start = rank.Val() + 1
 			stop = start + DATA_PER_PAGE - 1
 			break
@@ -578,7 +542,7 @@ func (gl *GetterLib) GetLinked(anyUUID string, lastRandIds []string) ([]types.En
 	totalItem := gl.redis.TotalItemOnSortedSet(anyUUID)
 
 	if totalItem == 0 {
-		return anyModules, validLastUUID, 0, nil
+		return anyModules, validLastRandId, 0, nil
 	}
 
 	listUUID := (*gl.redisClient).ZRevRange(
@@ -613,7 +577,7 @@ func (gl *GetterLib) GetLinked(anyUUID string, lastRandIds []string) ([]types.En
 		anyModules = append(anyModules, *anyModule)
 	}
 
-	return anyModules, validLastUUID, start, nil
+	return anyModules, validLastRandId, start, nil
 }
 
 // GetAll
@@ -692,7 +656,7 @@ func (cr CommonRedis) Set(anyModule *types.Entity) *types.Error {
 		}
 	}
 
-	key := "anyModule:" + anyModule.UUID
+	key := "anyModule:" + anyModule.RandID
 	err := (*cr.client).Set(context.TODO(), key, anyModuleJsonString, 0).Err()
 	if err != nil {
 		return &types.Error{
@@ -706,7 +670,7 @@ func (cr CommonRedis) Set(anyModule *types.Entity) *types.Error {
 
 // Del data
 func (cr CommonRedis) Del(anyModule *types.Entity) *types.Error {
-	key := "anyModule:" + anyModule.UUID
+	key := "anyModule:" + anyModule.RandID
 	err := (*cr.client).Del(context.TODO(), key).Err()
 	if err != nil {
 		return &types.Error{
@@ -719,37 +683,6 @@ func (cr CommonRedis) Del(anyModule *types.Entity) *types.Error {
 	return nil
 }
 
-// SetRandID
-// Set translate key randid to uuid
-func (cr CommonRedis) SetRandID(anyModule *types.Entity) *types.Error {
-	key := "anyModule:uuid:" + anyModule.RandID
-	err := (*cr.client).Set(context.TODO(), key, anyModule.UUID, 0)
-
-	if err.Err() != nil {
-		return &types.Error{
-			Err:     REDIS_FATAL_ERROR,
-			Details: err.Err().Error(),
-			Message: "SetRandID operation failed",
-		}
-	}
-	return nil
-}
-
-// DelRandId
-func (cr CommonRedis) DelRandId(anyModule *types.Entity) *types.Error {
-
-	key := "anyModule:uuid:" + anyModule.RandID
-	err := (*cr.client).Del(context.TODO(), key)
-
-	if err.Err() != nil {
-		return &types.Error{
-			Err:     REDIS_FATAL_ERROR,
-			Details: err.Err().Error(),
-			Message: "DelRandId operation failed",
-		}
-	}
-	return nil
-}
 
 // GetSettled
 func (cr CommonRedis) GetSettled(anyUUID string) (bool, *types.Error) {
@@ -821,7 +754,7 @@ func (cr CommonRedis) SetSortedSet(anyModule *types.Entity) *types.Error {
 
 	sortedSetMember := redis.Z{
 		Score:  float64(anyModule.CreatedAt),
-		Member: anyModule.UUID,
+		Member: anyModule.RandID,
 	}
 
 	setSortedSet := (*cr.client).ZAdd(
@@ -862,7 +795,7 @@ func (cr CommonRedis) DeleteFromSortedSet(anyModule *types.Entity) *types.Error 
 	removeFromSortedSet := (*cr.client).ZRem(
 		context.TODO(),
 		key,
-		anyModule.UUID,
+		anyModule.RandID,
 	)
 
 	if removeFromSortedSet.Err() != nil {
