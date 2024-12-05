@@ -253,7 +253,6 @@ func (sl *SetterLib) DeleteManyByAnyUUID(anyUUID string) *types.Error {
 		}
 
 		sl.redis.Del(anyModule)
-		sl.redis.DeleteFromSortedSet(anyModule)
 	}
 
 	//	3. Delete sorted set key
@@ -331,7 +330,7 @@ func (sl *SetterLib) SeedByRandID(randId string) (*types.Entity, *types.Error) {
 
 
 // SeedLinked
-func (sl *SetterLib) SeedLinked(subtraction int64, latestItemHex string, lastUUID string, anyUUID string) *types.Error {
+func (sl *SetterLib) SeedLinked(subtraction int64, latestItemHex string, lastRandId string, anyUUID string) *types.Error {
 	if sl.anyModuleCollection == nil {
 		return &types.Error{
 			Err:     errors.New("anyModuleCollection is nil"),
@@ -369,10 +368,10 @@ func (sl *SetterLib) SeedLinked(subtraction int64, latestItemHex string, lastUUI
 	} else {
 
 		findOptions.SetLimit(int64(DATA_PER_PAGE))
-		if lastUUID != "" {
+		if lastRandId != "" {
 
 			// findOne validLastUUID first
-			anyModule, errorFind := sl.FindByUUID(lastUUID)
+			anyModule, errorFind := sl.FindByRandID(lastRandId)
 
 			if errorFind != nil {
 				return errorFind
@@ -545,17 +544,17 @@ func (gl *GetterLib) GetLinked(anyUUID string, lastRandIds []string) ([]types.En
 		return anyModules, validLastRandId, 0, nil
 	}
 
-	listUUID := (*gl.redisClient).ZRevRange(
+	listRandIds := (*gl.redisClient).ZRevRange(
 		context.TODO(),
 		sortedSetKey,
 		start,
 		stop,
 	)
 
-	if listUUID.Err() != nil {
+	if listRandIds.Err() != nil {
 		return nil, "", 0, &types.Error{
 			Err:     REDIS_FATAL_ERROR,
-			Details: listUUID.Err().Error(),
+			Details: listRandIds.Err().Error(),
 			Message: "GetAll operation failed",
 		}
 	}
@@ -566,8 +565,8 @@ func (gl *GetterLib) GetLinked(anyUUID string, lastRandIds []string) ([]types.En
 		SORTED_SET_TTL,
 	)
 
-	for i := 0; i < len(listUUID.Val()); i++ {
-		uuid := listUUID.Val()[i]
+	for i := 0; i < len(listRandIds.Val()); i++ {
+		uuid := listRandIds.Val()[i]
 		anyModule, errGet := gl.redis.Get(uuid)
 
 		if errGet != nil {
@@ -591,17 +590,17 @@ func (gl *GetterLib) GetAll(anyUUID string) ([]types.Entity, *types.Error) {
 		return anyModules, nil
 	}
 
-	listUUID := (*gl.redisClient).ZRevRange(
+	listRandIds := (*gl.redisClient).ZRevRange(
 		context.TODO(),
 		sortedSetKey,
 		0,
 		-1,
 	)
 
-	if listUUID.Err() != nil {
+	if listRandIds.Err() != nil {
 		return nil, &types.Error{
 			Err:     REDIS_FATAL_ERROR,
-			Details: listUUID.Err().Error(),
+			Details: listRandIds.Err().Error(),
 			Message: "GetAll operation failed",
 		}
 	}
@@ -612,8 +611,8 @@ func (gl *GetterLib) GetAll(anyUUID string) ([]types.Entity, *types.Error) {
 		SORTED_SET_TTL,
 	)
 
-	for i := 0; i < len(listUUID.Val()); i++ {
-		uuid := listUUID.Val()[i]
+	for i := 0; i < len(listRandIds.Val()); i++ {
+		uuid := listRandIds.Val()[i]
 		anyModule, errGet := gl.redis.Get(uuid)
 
 		if errGet != nil {
